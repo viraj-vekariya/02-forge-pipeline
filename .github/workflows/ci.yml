@@ -1,0 +1,154 @@
+name: forge-ci
+
+# The pipeline this project is about. Every job proves a claim the README makes,
+# rather than trusting it:
+#
+#   train      the model trains, and its metrics clear a floor
+#   java       the Java deployable builds - the polyglot claim is not aspirational
+#   contract   the exported artifact agrees with the eager model, and the served API
+#              matches the manifest it claims to serve
+#   loadtest   the service still saturates where it did, so a performance regression
+#              fails the build instead of being noticed in production
+
+on:
+  push: {branches: [main]}
+  pull_request: {branches: [main]}
+  workflow_dispatch:
+
+env:
+  FORGE_SEED: "20260910"
+
+jobs:
+  train:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.12", cache: pip}
+
+      - name: Install (CPU-only torch)
+        run: |
+          pip install --index-url https://download.pytorch.org/whl/cpu torch torchvision
+          pip install -r requirements.txt
+
+      - name: Cache the dataset
+        uses: actions/cache@v4
+        with:
+          path: data
+          key: fashion-mnist-v1
+
+      - name: Train
+        run: python train/train.py --quick
+
+      - name: Evaluate
+        run: python train/evaluate.py
+
+      - name: Export and verify
+        # export.py re-loads its own output and refuses to write if the traced graph
+        # disagrees with the eager model, so a silent tracing bug fails here.
+        run: python train/export.py
+
+      - name: Gate on model quality
+        run: |
+          python - <<'PY'
+          import json, sys
+          m = json.load(open("artifacts/manifest.json"))
+          acc = m["evaluation"]["test_accuracy"]
+          print(f"test accuracy {acc}")
+          # A floor, not the full-run target: this job trains 2 epochs. It catches a
+          # broken pipeline (shuffled labels, dead normalisation) without failing on
+          # ordinary run-to-run variation.
+          assert acc > 0.85, f"model quality floor breached: {acc}"
+          assert m["export"]["argmax_agreement"], "traced model disagrees with eager"
+          PY
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: model
+          path: |
+            artifacts/model_traced.pt
+            artifacts/manifest.json
+            outputs/evaluation.json
+
+  java:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with: {distribution: temurin, java-version: "21", cache: maven}
+      - name: Build the feature service
+        working-directory: services/java-service
+        run: mvn -B -q package -DskipTests
+
+  contract:
+    runs-on: ubuntu-latest
+    needs: [train]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.12", cache: pip}
+      - uses: actions/download-artifact@v4
+        with: {name: model, path: .}
+
+      - run: |
+          pip install --index-url https://download.pytorch.org/whl/cpu torch torchvision
+          pip install -r requirements.txt
+
+      - name: Tests
+        run: python -m pytest tests/ -q
+
+      - name: Served model must match the manifest it claims
+        run: |
+          python -m uvicorn serve.app:app --host 127.0.0.1 --port 8200 &
+          for i in $(seq 1 60); do
+            curl -sf localhost:8200/health/ready >/dev/null && break; sleep 2; done
+          python - <<'PY'
+          import json, urllib.request
+          served = json.load(urllib.request.urlopen("http://127.0.0.1:8200/model"))
+          disk = json.load(open("artifacts/manifest.json"))
+          assert served["manifest"]["version"] == disk["version"], "serving a different model"
+          assert served["info"]["sha256"] == disk["export"]["sha256"][:16]
+          # Readiness must be false-able: a service that is always ready cannot be
+          # drained, and a load balancer would keep sending traffic during a bad deploy.
+          body = json.load(urllib.request.urlopen("http://127.0.0.1:8200/health/ready"))
+          assert body["model_loaded"] and body["warmed"]
+          print("contract ok:", served["info"]["version"])
+          PY
+
+  loadtest:
+    runs-on: ubuntu-latest
+    needs: [contract]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.12", cache: pip}
+      - uses: actions/download-artifact@v4
+        with: {name: model, path: .}
+
+      - run: |
+          pip install --index-url https://download.pytorch.org/whl/cpu torch torchvision
+          pip install -r requirements.txt
+
+      - name: Ramp to SLA breach and profile
+        run: |
+          FORGE_TORCH_THREADS=1 python -m uvicorn serve.app:app \
+            --host 127.0.0.1 --port 8200 --workers 1 &
+          for i in $(seq 1 60); do
+            curl -sf localhost:8200/health/ready >/dev/null && break; sleep 2; done
+          python loadtest/harness.py --base http://127.0.0.1:8200 --quick
+          python - <<'PY'
+          import json
+          r = json.load(open("outputs/loadtest.json"))
+          peak = r["peak"]["throughput_rps"]
+          print(f"peak {peak} rps at concurrency {r['peak']['concurrency']}")
+          # A regression gate, not a benchmark. CI runners are slower and noisier than
+          # a laptop, so the floor is deliberately far below the measured 1,512 rps -
+          # it catches a 10x collapse, not a 20% fluctuation.
+          assert peak > 150, f"throughput collapsed to {peak} rps"
+          assert r["steps"][0]["errors"] == 0, "errors at concurrency 1"
+          PY
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: measured-results
+          path: outputs/*.json

@@ -1,0 +1,43 @@
+# Fly.io deployment for the inference service.
+#
+#   fly deploy --config infra/fly.toml --dockerfile infra/Dockerfile.serve
+#
+# Fly builds remotely, so no local Docker daemon is needed.
+
+app = "forge-inference"
+primary_region = "sin"
+
+[build]
+  dockerfile = "Dockerfile.serve"
+
+[env]
+  FORGE_TORCH_THREADS = "1"
+
+[http_service]
+  internal_port = 8200
+  force_https = true
+  # Scale-to-zero is wrong for this service: a cold start pays the model load plus the
+  # 4-6x warmup penalty measured in serve/warmup.py, on a real user's request.
+  auto_stop_machines = false
+  auto_start_machines = true
+  min_machines_running = 1
+
+  # The autoscale trigger comes straight from the load test: throughput saturates at
+  # ~1,500 rps per instance and p99 crosses the 100ms SLA at concurrency 64. Holding
+  # 25 concurrent requests per machine keeps p99 near 20ms with headroom.
+  [http_service.concurrency]
+    type = "requests"
+    soft_limit = 25
+    hard_limit = 40
+
+  [[http_service.checks]]
+    interval = "15s"
+    timeout = "4s"
+    grace_period = "40s"
+    method = "GET"
+    path = "/health/ready"
+
+[[vm]]
+  cpu_kind = "shared"
+  cpus = 2
+  memory_mb = 1024

@@ -1,0 +1,14 @@
+# Training
+torch>=2.2
+torchvision>=0.17
+
+# Serving
+fastapi>=0.115
+uvicorn[standard]>=0.30
+pydantic>=2.7
+
+# Load testing
+httpx>=0.27
+
+# Tests
+pytest>=8.0

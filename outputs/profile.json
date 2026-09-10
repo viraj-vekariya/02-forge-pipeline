@@ -1,0 +1,99 @@
+{
+  "littles_law": {
+    "hypothesis": "closed-system queue at its service-rate ceiling",
+    "rows": [
+      {
+        "concurrency": 1,
+        "throughput_rps": 1187.5,
+        "mean_latency_ms": 0.842,
+        "predicted_concurrency": 1.0,
+        "relative_error": 0.0001
+      },
+      {
+        "concurrency": 2,
+        "throughput_rps": 1512.1,
+        "mean_latency_ms": 1.322,
+        "predicted_concurrency": 2.0,
+        "relative_error": 0.0005
+      },
+      {
+        "concurrency": 4,
+        "throughput_rps": 1413.2,
+        "mean_latency_ms": 2.83,
+        "predicted_concurrency": 4.0,
+        "relative_error": 0.0002
+      },
+      {
+        "concurrency": 8,
+        "throughput_rps": 1417.8,
+        "mean_latency_ms": 5.643,
+        "predicted_concurrency": 8.0,
+        "relative_error": 0.0001
+      },
+      {
+        "concurrency": 16,
+        "throughput_rps": 1277.0,
+        "mean_latency_ms": 12.532,
+        "predicted_concurrency": 16.0,
+        "relative_error": 0.0002
+      },
+      {
+        "concurrency": 32,
+        "throughput_rps": 1314.8,
+        "mean_latency_ms": 24.359,
+        "predicted_concurrency": 32.03,
+        "relative_error": 0.0009
+      },
+      {
+        "concurrency": 64,
+        "throughput_rps": 1174.1,
+        "mean_latency_ms": 54.459,
+        "predicted_concurrency": 63.94,
+        "relative_error": 0.0009
+      }
+    ],
+    "mean_relative_error": 0.0004,
+    "max_relative_error": 0.0009,
+    "holds": true
+  },
+  "service_rate": {
+    "samples": 400,
+    "client_observed_mean_ms": 1.021,
+    "server_inference_mean_ms": 0.407,
+    "server_preprocess_mean_ms": 0.015,
+    "inference_share_of_request": 0.399,
+    "implied_max_rps_single_threaded": 979.3,
+    "implied_max_rps_if_only_inference": 2454.9
+  },
+  "worker_scaling": {
+    "hypothesis": "the throughput ceiling is per-process",
+    "cpu_budget": {
+      "physical_cores_reported": 10,
+      "server_processes_under_test": 4,
+      "client_threads": 8,
+      "other_service_processes": 1,
+      "demand": 13,
+      "oversubscribed": true
+    },
+    "concurrency": 8,
+    "workers_1": {
+      "throughput_rps": 1496.4,
+      "p50_ms": 5.709,
+      "p99_ms": 20.028,
+      "errors": 0
+    },
+    "workers_4": {
+      "throughput_rps": 1706.9,
+      "p50_ms": 4.836,
+      "p99_ms": 22.003,
+      "errors": 0
+    },
+    "throughput_gain": 1.14,
+    "ideal_gain": 4,
+    "scaling_efficiency": 0.285,
+    "p99_change": 1.1,
+    "holds": false,
+    "confounded_by_oversubscription": true
+  },
+  "measured_peak_rps": 1512.1
+}

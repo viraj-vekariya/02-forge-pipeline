@@ -1,0 +1,313 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Forge Inference</title>
+<!--
+  Inference console. Draw a garment, get a prediction; run a load ramp and watch the
+  latency curve bend while throughput stays flat.
+
+  React over CDN with no build step, for the same reason as everything else in these
+  projects: a single operator page served by the service itself should not require the
+  service's container to carry a Node toolchain.
+
+  The drawing canvas is not decoration. A model that only ever sees the test set is a
+  model nobody has actually interrogated - drawing a shirt by hand and watching it come
+  back "Shirt, 0.62, but also 0.31 Coat" is what makes the confusion matrix real.
+-->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.3.1/umd/react.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.3.1/umd/react-dom.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.26.2/babel.min.js"></script>
+<style>
+  :root{
+    --bg:#0d1117; --panel:#151b23; --panel2:#1c242e; --line:#2a3440;
+    --text:#e6edf3; --dim:#8b98a9; --accent:#58a6ff;
+    --ok:#3fb950; --warn:#d29922; --bad:#f85149;
+    --mono:ui-monospace,SFMono-Regular,"SF Mono",Menlo,monospace;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--text);
+       font:14px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,sans-serif}
+  .wrap{max-width:1280px;margin:0 auto;padding:22px 16px 60px}
+  header{display:flex;align-items:baseline;gap:12px;flex-wrap:wrap}
+  h1{font-size:20px;margin:0;letter-spacing:-.02em}
+  .sub{color:var(--dim);font-size:13px}
+  .pill{font:600 11px var(--mono);padding:3px 8px;border-radius:999px;
+        border:1px solid var(--line);background:var(--panel2);color:var(--dim)}
+  .pill.ok{color:var(--ok);border-color:#1f4a2a}
+  .pill.bad{color:var(--bad);border-color:#5c2224}
+  .grid{display:grid;gap:14px;margin-top:18px}
+  .two{grid-template-columns:340px 1fr}
+  @media(max-width:860px){.two{grid-template-columns:1fr}}
+  .panel{background:var(--panel);border:1px solid var(--line);border-radius:10px;overflow:hidden}
+  .panel h2{font-size:12px;margin:0;padding:11px 14px;border-bottom:1px solid var(--line);
+            color:var(--dim);text-transform:uppercase;letter-spacing:.07em;font-weight:600}
+  .pad{padding:14px}
+  canvas{border-radius:8px;background:#000;cursor:crosshair;touch-action:none;
+         image-rendering:pixelated;display:block;width:280px;height:280px}
+  .btnrow{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}
+  button{font:600 12px/1 inherit;padding:9px 14px;border-radius:7px;cursor:pointer;
+         border:1px solid var(--line);background:var(--panel2);color:var(--text)}
+  button:hover:not(:disabled){border-color:var(--accent)}
+  button.primary{background:var(--accent);border-color:var(--accent);color:#06121f}
+  button:disabled{opacity:.5;cursor:not-allowed}
+  .verdict{font:700 26px/1.2 -apple-system,system-ui;margin:4px 0 2px;letter-spacing:-.02em}
+  .conf{font:600 13px var(--mono);color:var(--dim)}
+  .bars{margin-top:12px}
+  .bar{display:grid;grid-template-columns:90px 1fr 48px;gap:8px;align-items:center;
+       margin-bottom:5px;font:11px var(--mono)}
+  .bar .track{height:8px;background:#1e2732;border-radius:4px;overflow:hidden}
+  .bar .fill{height:100%;background:var(--accent);border-radius:4px}
+  .bar .fill.top{background:var(--ok)}
+  .bar span:last-child{text-align:right;color:var(--dim)}
+  table{width:100%;border-collapse:collapse;font-family:var(--mono);font-size:12px}
+  th{background:var(--panel2);color:var(--dim);text-align:right;padding:7px 10px;
+     font-weight:600;font-size:11px;border-bottom:1px solid var(--line)}
+  th:first-child,td:first-child{text-align:left}
+  td{padding:6px 10px;border-bottom:1px solid #1b232d;text-align:right}
+  tr.breach td{background:rgba(248,81,73,.10);color:var(--bad)}
+  .kv{display:grid;grid-template-columns:auto 1fr;gap:4px 14px;font:12px var(--mono)}
+  .kv dt{color:var(--dim)} .kv dd{margin:0}
+  .note{color:var(--dim);font-size:12px;padding:0 14px 14px;line-height:1.5}
+  code{font-family:var(--mono);background:var(--panel2);padding:1px 5px;border-radius:4px}
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel">
+const {useState,useEffect,useRef,useCallback} = React;
+const SIZE = 280, GRID = 28, CELL = SIZE / GRID;
+
+function Canvas({onPixels}){
+  const ref = useRef(null);
+  const drawing = useRef(false);
+
+  useEffect(()=>{
+    const ctx = ref.current.getContext("2d");
+    ctx.fillStyle = "#000"; ctx.fillRect(0,0,SIZE,SIZE);
+  },[]);
+
+  const paint = (e) => {
+    const canvas = ref.current, rect = canvas.getBoundingClientRect();
+    const ctx = canvas.getContext("2d");
+    const x = (e.clientX ?? e.touches[0].clientX) - rect.left;
+    const y = (e.clientY ?? e.touches[0].clientY) - rect.top;
+    // A soft brush, because Fashion-MNIST images are antialiased greyscale. A hard
+    // 1-bit brush produces inputs unlike anything in the training distribution and
+    // the model deserves a fair test.
+    const g = ctx.createRadialGradient(x,y,0,x,y,CELL*1.6);
+    g.addColorStop(0,"rgba(255,255,255,1)");
+    g.addColorStop(1,"rgba(255,255,255,0)");
+    ctx.fillStyle = g;
+    ctx.beginPath(); ctx.arc(x,y,CELL*1.6,0,Math.PI*2); ctx.fill();
+  };
+
+  const extract = () => {
+    const ctx = ref.current.getContext("2d");
+    const img = ctx.getImageData(0,0,SIZE,SIZE).data;
+    const out = new Array(GRID*GRID).fill(0);
+    // Box-downsample 280x280 -> 28x28 by averaging each 10x10 cell. Nearest-neighbour
+    // would drop most of a thin stroke entirely.
+    for(let gy=0; gy<GRID; gy++) for(let gx=0; gx<GRID; gx++){
+      let sum=0;
+      for(let y=0;y<CELL;y++) for(let x=0;x<CELL;x++){
+        const px = ((gy*CELL+y)*SIZE + (gx*CELL+x))*4;
+        sum += img[px];             // greyscale: red channel is enough
+      }
+      out[gy*GRID+gx] = sum/(CELL*CELL);
+    }
+    return out;
+  };
+
+  const clear = () => {
+    const ctx = ref.current.getContext("2d");
+    ctx.fillStyle="#000"; ctx.fillRect(0,0,SIZE,SIZE);
+  };
+
+  return <div>
+    <canvas ref={ref} width={SIZE} height={SIZE}
+      onPointerDown={e=>{drawing.current=true; paint(e);}}
+      onPointerMove={e=>{if(drawing.current) paint(e);}}
+      onPointerUp={()=>{drawing.current=false; onPixels(extract());}}
+      onPointerLeave={()=>{if(drawing.current){drawing.current=false; onPixels(extract());}}}/>
+    <div className="btnrow">
+      <button className="primary" onClick={()=>onPixels(extract())}>Classify</button>
+      <button onClick={()=>{clear(); onPixels(null);}}>Clear</button>
+    </div>
+  </div>;
+}
+
+function Probabilities({probs}){
+  if(!probs) return null;
+  const rows = Object.entries(probs).sort((a,b)=>b[1]-a[1]);
+  const top = rows[0][0];
+  return <div className="bars">{rows.map(([name,p])=>
+    <div className="bar" key={name}>
+      <span>{name}</span>
+      <div className="track"><div className={"fill"+(name===top?" top":"")}
+        style={{width:(p*100).toFixed(1)+"%"}}/></div>
+      <span>{(p*100).toFixed(1)}%</span>
+    </div>)}</div>;
+}
+
+function LoadRamp({onDone}){
+  const [rows,setRows] = useState([]);
+  const [running,setRunning] = useState(false);
+
+  const ramp = async () => {
+    setRunning(true); setRows([]);
+    const px = Array.from({length:784},(_,i)=>(i*7)%256);
+    const body = JSON.stringify({pixels:px});
+    const collected = [];
+    for(const conc of [1,2,4,8,16,32]){
+      const latencies = []; const t0 = performance.now();
+      const DURATION = 1200;
+      const worker = async () => {
+        while(performance.now() - t0 < DURATION){
+          const s = performance.now();
+          try{
+            await fetch("/predict",{method:"POST",
+              headers:{"content-type":"application/json"},body});
+            latencies.push(performance.now()-s);
+          }catch(_){}
+        }
+      };
+      await Promise.all(Array.from({length:conc},worker));
+      const elapsed = (performance.now()-t0)/1000;
+      const sorted = latencies.sort((a,b)=>a-b);
+      const pct = p => sorted.length ? sorted[Math.min(sorted.length-1,(sorted.length*p)|0)] : 0;
+      const row = {conc, rps: latencies.length/elapsed, p50: pct(.5), p99: pct(.99),
+                   breach: pct(.99) > 100};
+      collected.push(row);
+      setRows([...collected]);
+    }
+    setRunning(false);
+    onDone && onDone();
+  };
+
+  return <div>
+    <div className="btnrow" style={{marginTop:0}}>
+      <button className="primary" disabled={running} onClick={ramp}>
+        {running ? "ramping…" : "Run load ramp"}</button>
+    </div>
+    {rows.length>0 && <table style={{marginTop:12}}>
+      <thead><tr><th>concurrency</th><th>rps</th><th>p50 ms</th><th>p99 ms</th></tr></thead>
+      <tbody>{rows.map(r=>
+        <tr key={r.conc} className={r.breach?"breach":""}>
+          <td>{r.conc}</td><td>{r.rps.toFixed(0)}</td>
+          <td>{r.p50.toFixed(2)}</td><td>{r.p99.toFixed(2)}</td>
+        </tr>)}</tbody>
+    </table>}
+  </div>;
+}
+
+function App(){
+  const [model,setModel] = useState(null);
+  const [ready,setReady] = useState(null);
+  const [result,setResult] = useState(null);
+  const [metrics,setMetrics] = useState(null);
+  const [busy,setBusy] = useState(false);
+
+  const refresh = useCallback(async()=>{
+    try{
+      const r = await fetch("/health/ready");
+      setReady(r.ok);
+      setMetrics(await (await fetch("/metrics")).json());
+      if(!model) setModel((await (await fetch("/model")).json()).info);
+    }catch(_){ setReady(false); }
+  },[model]);
+
+  useEffect(()=>{ refresh(); const id=setInterval(refresh,3000); return ()=>clearInterval(id); },[refresh]);
+
+  const classify = async (pixels) => {
+    if(!pixels){ setResult(null); return; }
+    if(pixels.every(v=>v===0)){ setResult({empty:true}); return; }
+    setBusy(true);
+    try{
+      const r = await fetch("/predict",{method:"POST",
+        headers:{"content-type":"application/json"},
+        body:JSON.stringify({pixels})});
+      setResult(await r.json());
+    }catch(e){ setResult({error:String(e)}); }
+    finally{ setBusy(false); refresh(); }
+  };
+
+  const lat = metrics?.latency;
+
+  return <div className="wrap">
+    <header>
+      <h1>Forge Inference</h1>
+      <span className="sub">trained, exported, verified and deployed by the pipeline</span>
+      <span className={"pill "+(ready?"ok":"bad")}>{ready===null?"…":ready?"ready":"not ready"}</span>
+      {model && <span className="pill">{model.version}</span>}
+      {model && <span className="pill">acc {model.test_accuracy}</span>}
+      {metrics && <span className="pill">{metrics.torch_threads} torch thread(s)</span>}
+    </header>
+
+    <div className="grid two">
+      <div className="panel">
+        <h2>Draw a garment</h2>
+        <div className="pad">
+          <Canvas onPixels={classify}/>
+          <div className="note" style={{padding:"12px 0 0"}}>
+            Ten classes: t-shirt, trouser, pullover, dress, coat, sandal, shirt,
+            sneaker, bag, ankle boot. Shirt and t-shirt are the model's worst
+            confusion — 92 of 1,000 — so try both.
+          </div>
+        </div>
+      </div>
+
+      <div>
+        <div className="panel" style={{marginBottom:14}}>
+          <h2>Prediction</h2>
+          <div className="pad">
+            {busy && <div className="conf">classifying…</div>}
+            {!busy && !result && <div className="conf">Draw something, then release.</div>}
+            {result?.empty && <div className="conf">Canvas is empty.</div>}
+            {result?.error && <div className="conf" style={{color:"var(--bad)"}}>{result.error}</div>}
+            {result?.prediction && <>
+              <div className="verdict">{result.prediction}</div>
+              <div className="conf">
+                {(result.confidence*100).toFixed(1)}% confident ·
+                {" "}{result.timing_ms.total.toFixed(2)}ms total ·
+                {" "}{result.timing_ms.inference.toFixed(2)}ms model
+              </div>
+              <Probabilities probs={result.probabilities}/>
+            </>}
+          </div>
+        </div>
+
+        <div className="panel" style={{marginBottom:14}}>
+          <h2>Load ramp — watch throughput flatten while latency climbs</h2>
+          <div className="pad"><LoadRamp onDone={refresh}/></div>
+          <div className="note">
+            Throughput stops rising after about two concurrent callers; every client
+            after that only adds queueing delay. <code>Little's Law</code> holds to
+            0.0% error across the ramp, which identifies this as a saturated queue at
+            its service-rate ceiling rather than a bug.
+          </div>
+        </div>
+
+        <div className="panel">
+          <h2>Live server metrics</h2>
+          <div className="pad">
+            {lat ? <dl className="kv">
+              <dt>requests</dt><dd>{lat.requests.toLocaleString()}</dd>
+              <dt>mean total</dt><dd>{lat.mean_total_ms} ms</dd>
+              <dt>mean model</dt><dd>{lat.mean_inference_ms} ms</dd>
+              <dt>model share</dt><dd>{(lat.inference_share*100).toFixed(0)}%</dd>
+              <dt>p50 / p95 / p99</dt><dd>{lat.p50_ms} / {lat.p95_ms} / {lat.p99_ms} ms</dd>
+              <dt>errors</dt><dd>{lat.errors}</dd>
+            </dl> : <div className="conf">no requests yet</div>}
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>;
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(<App/>);
+</script>
+</body>
+</html>

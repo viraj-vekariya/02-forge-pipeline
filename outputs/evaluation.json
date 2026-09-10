@@ -1,0 +1,293 @@
+{
+  "test_accuracy": 0.9344,
+  "test_size": 10000,
+  "temperature": 0.7206,
+  "ece_raw": 0.0333,
+  "ece_calibrated": 0.014,
+  "ece_improvement": 0.0193,
+  "mean_confidence_raw": 0.9016,
+  "mean_confidence_calibrated": 0.9481,
+  "per_class": [
+    {
+      "class": "T-shirt/top",
+      "support": 1000,
+      "precision": 0.8819,
+      "recall": 0.896,
+      "f1": 0.8889
+    },
+    {
+      "class": "Trouser",
+      "support": 1000,
+      "precision": 0.993,
+      "recall": 0.988,
+      "f1": 0.9905
+    },
+    {
+      "class": "Pullover",
+      "support": 1000,
+      "precision": 0.9065,
+      "recall": 0.902,
+      "f1": 0.9043
+    },
+    {
+      "class": "Dress",
+      "support": 1000,
+      "precision": 0.9222,
+      "recall": 0.936,
+      "f1": 0.929
+    },
+    {
+      "class": "Coat",
+      "support": 1000,
+      "precision": 0.9041,
+      "recall": 0.905,
+      "f1": 0.9045
+    },
+    {
+      "class": "Sandal",
+      "support": 1000,
+      "precision": 0.989,
+      "recall": 0.986,
+      "f1": 0.9875
+    },
+    {
+      "class": "Shirt",
+      "support": 1000,
+      "precision": 0.8076,
+      "recall": 0.789,
+      "f1": 0.7982
+    },
+    {
+      "class": "Sneaker",
+      "support": 1000,
+      "precision": 0.9656,
+      "recall": 0.982,
+      "f1": 0.9737
+    },
+    {
+      "class": "Bag",
+      "support": 1000,
+      "precision": 0.989,
+      "recall": 0.99,
+      "f1": 0.9895
+    },
+    {
+      "class": "Ankle boot",
+      "support": 1000,
+      "precision": 0.9838,
+      "recall": 0.97,
+      "f1": 0.9768
+    }
+  ],
+  "top_confusions": [
+    {
+      "true": "Shirt",
+      "predicted": "T-shirt/top",
+      "count": 92
+    },
+    {
+      "true": "T-shirt/top",
+      "predicted": "Shirt",
+      "count": 72
+    },
+    {
+      "true": "Shirt",
+      "predicted": "Coat",
+      "count": 48
+    },
+    {
+      "true": "Coat",
+      "predicted": "Shirt",
+      "count": 45
+    },
+    {
+      "true": "Pullover",
+      "predicted": "Shirt",
+      "count": 42
+    }
+  ],
+  "reliability_calibrated": [
+    {
+      "bin": "0.2-0.3",
+      "n": 4,
+      "confidence": 0.2449,
+      "accuracy": 0.25
+    },
+    {
+      "bin": "0.3-0.4",
+      "n": 32,
+      "confidence": 0.362,
+      "accuracy": 0.25
+    },
+    {
+      "bin": "0.4-0.5",
+      "n": 105,
+      "confidence": 0.4627,
+      "accuracy": 0.4095
+    },
+    {
+      "bin": "0.5-0.6",
+      "n": 242,
+      "confidence": 0.5511,
+      "accuracy": 0.5413
+    },
+    {
+      "bin": "0.6-0.7",
+      "n": 263,
+      "confidence": 0.6509,
+      "accuracy": 0.6312
+    },
+    {
+      "bin": "0.7-0.8",
+      "n": 307,
+      "confidence": 0.7515,
+      "accuracy": 0.6254
+    },
+    {
+      "bin": "0.8-0.9",
+      "n": 469,
+      "confidence": 0.8564,
+      "accuracy": 0.7825
+    },
+    {
+      "bin": "0.9-1.0",
+      "n": 8578,
+      "confidence": 0.989,
+      "accuracy": 0.9834
+    }
+  ],
+  "confusion_matrix": [
+    [
+      896,
+      1,
+      15,
+      10,
+      1,
+      0,
+      72,
+      0,
+      5,
+      0
+    ],
+    [
+      0,
+      988,
+      0,
+      8,
+      0,
+      0,
+      2,
+      0,
+      2,
+      0
+    ],
+    [
+      17,
+      1,
+      902,
+      10,
+      28,
+      0,
+      42,
+      0,
+      0,
+      0
+    ],
+    [
+      11,
+      2,
+      8,
+      936,
+      18,
+      0,
+      25,
+      0,
+      0,
+      0
+    ],
+    [
+      0,
+      1,
+      27,
+      22,
+      905,
+      0,
+      45,
+      0,
+      0,
+      0
+    ],
+    [
+      0,
+      0,
+      0,
+      0,
+      0,
+      986,
+      0,
+      10,
+      0,
+      4
+    ],
+    [
+      92,
+      1,
+      40,
+      26,
+      48,
+      0,
+      789,
+      0,
+      4,
+      0
+    ],
+    [
+      0,
+      0,
+      0,
+      0,
+      0,
+      6,
+      0,
+      982,
+      0,
+      12
+    ],
+    [
+      0,
+      1,
+      2,
+      3,
+      1,
+      1,
+      2,
+      0,
+      990,
+      0
+    ],
+    [
+      0,
+      0,
+      1,
+      0,
+      0,
+      4,
+      0,
+      25,
+      0,
+      970
+    ]
+  ],
+  "classes": [
+    "T-shirt/top",
+    "Trouser",
+    "Pullover",
+    "Dress",
+    "Coat",
+    "Sandal",
+    "Shirt",
+    "Sneaker",
+    "Bag",
+    "Ankle boot"
+  ]
+}

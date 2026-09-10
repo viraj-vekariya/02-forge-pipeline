@@ -1,0 +1,46 @@
+# Inference image.
+#
+# Multi-stage, and the interesting part is that the runtime stage installs the CPU-ONLY
+# torch wheel. The default torch wheel bundles CUDA and is ~2.5GB; the CPU wheel is
+# ~200MB. Shipping CUDA to a container that will never see a GPU is the single largest
+# avoidable cost in most ML images.
+
+FROM python:3.12-slim AS build
+WORKDIR /build
+RUN pip install --no-cache-dir --prefix=/install \
+        --index-url https://download.pytorch.org/whl/cpu torch>=2.2 && \
+    pip install --no-cache-dir --prefix=/install \
+        fastapi "uvicorn[standard]" pydantic
+
+# ---------------------------------------------------------------------------
+FROM python:3.12-slim
+
+RUN useradd --create-home --uid 10001 forge
+COPY --from=build /install /usr/local
+
+WORKDIR /app
+COPY serve/ ./serve/
+# Artifacts are COPIED IN, not trained here. The image is the model plus the server,
+# so the thing that was tested is byte-for-byte the thing that ships. Training inside
+# the image would produce a different model on every build.
+COPY artifacts/model_traced.pt artifacts/manifest.json ./artifacts/
+
+RUN chown -R forge:forge /app
+USER forge
+
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    FORGE_ARTIFACTS=/app/artifacts \
+    # One torch thread per worker. Left at the default, every worker tries to use every
+    # core and the oversubscription makes throughput fall as concurrency rises.
+    FORGE_TORCH_THREADS=1
+
+EXPOSE 8200
+
+# Readiness, not liveness: this must fail while the model is still loading and warming
+# so the platform holds traffic back instead of killing the container.
+HEALTHCHECK --interval=15s --timeout=4s --start-period=40s --retries=3 \
+    CMD python -c "import urllib.request,sys; \
+        sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8200/health/ready',timeout=3).status==200 else 1)"
+
+CMD ["uvicorn", "serve.app:app", "--host", "0.0.0.0", "--port", "8200", "--workers", "2"]

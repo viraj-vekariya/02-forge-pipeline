@@ -1,0 +1,126 @@
+{
+  "project": "Forge Pipeline",
+  "role": "CV1 / Software Development + Applied AI - deployment backbone",
+  "generated_at": "2026-09-10T05:58:27",
+  "verified_on": {
+    "platform": "macOS-27.0-arm64-arm-64bit-Mach-O",
+    "python": "3.13.9",
+    "torch": "2.13.0",
+    "training_device": "mps"
+  },
+  "lines_of_code": {
+    "train": 736,
+    "serve": 861,
+    "java": 234,
+    "loadtest": 776,
+    "tests": 388,
+    "infra": 362,
+    "total": 3357
+  },
+  "tests": "30 passed, 17 warnings in 6.17s",
+  "model": {
+    "architecture": "ForgeCNN",
+    "parameters": 468010,
+    "dataset": "FashionMNIST",
+    "dataset_fingerprint": "23408250fa8cac7a",
+    "train_size": 54000,
+    "test_size": 10000,
+    "epochs_run": 8,
+    "training_seconds": 128.8,
+    "best_val_accuracy": 0.9413,
+    "test_accuracy": 0.9344
+  },
+  "calibration": {
+    "temperature": 0.7206,
+    "ece_before": 0.0333,
+    "ece_after": 0.014,
+    "reduction_pct": 58.0,
+    "note": "temperature is BELOW 1.0, so the model is UNDER-confident - the opposite of the usual cross-entropy failure mode. Traceable to label_smoothing=0.05 in the training loss, which deliberately caps the target probability and teaches the network never to be fully certain.",
+    "top_confusion": {
+      "true": "Shirt",
+      "predicted": "T-shirt/top",
+      "count": 92
+    }
+  },
+  "headline_finding": {
+    "claim_tested": "Load the deployed endpoint until latency breaches SLA and identify the bottleneck by profiling rather than guessing.",
+    "sla_p99_ms": 100.0,
+    "breaking_point": {
+      "concurrency": 64,
+      "throughput_rps": 1174.1,
+      "p99_ms": 134.699
+    },
+    "peak_throughput_rps": 1512.1,
+    "peak_at_concurrency": 2,
+    "verdict": "Throughput plateaus at ~1,500 rps from concurrency 2 onward. Every additional client adds latency and no throughput. Little's Law holds to 0.0% error across all seven steps, which identifies this precisely as a saturated closed-loop queue at its service-rate ceiling - not a leak, deadlock or misconfigured pool.",
+    "littles_law": {
+      "mean_relative_error": 0.0004,
+      "max_relative_error": 0.0009,
+      "holds": true
+    },
+    "service_rate": {
+      "samples": 400,
+      "client_observed_mean_ms": 1.021,
+      "server_inference_mean_ms": 0.407,
+      "server_preprocess_mean_ms": 0.015,
+      "inference_share_of_request": 0.399,
+      "implied_max_rps_single_threaded": 979.3,
+      "implied_max_rps_if_only_inference": 2454.9
+    }
+  },
+  "second_finding": {
+    "claim_tested": "Batching raises inference throughput.",
+    "verdict": "Worth only 1.2x over HTTP, and NOTHING at the model level. Per-instance inference measured 0.303ms single vs 0.423ms at batch 32 - batching makes the model slightly SLOWER per item. The 1.2x seen over the network was amortised HTTP and serialisation cost, not model efficiency, which is why it does not grow with batch size.",
+    "why": "Batching normally amortises a large fixed per-call cost - kernel launch, host-device transfer, dispatch. A small CNN pinned to one CPU thread has almost none, so per-item compute dominates and building a bigger input tensor costs more than it saves.",
+    "consequence": "Throughput is bought with process concurrency, not batch size."
+  },
+  "third_finding": {
+    "claim_tested": "The throughput ceiling is per-process, so N workers give Nx.",
+    "verdict": "INCONCLUSIVE on this hardware, and reported as such. 4 workers gave 1.14x of an ideal 4x. The test co-locates the load generator with both services on one machine: 10 cores against a demand of 13. The measurement is CPU-oversubscribed, so it cannot separate 'horizontal scaling does not work' from 'this machine ran out of cores'. Settling it needs a separate load-generation host.",
+    "measured": {
+      "hypothesis": "the throughput ceiling is per-process",
+      "cpu_budget": {
+        "physical_cores_reported": 10,
+        "server_processes_under_test": 4,
+        "client_threads": 8,
+        "other_service_processes": 1,
+        "demand": 13,
+        "oversubscribed": true
+      },
+      "concurrency": 8,
+      "workers_1": {
+        "throughput_rps": 1496.4,
+        "p50_ms": 5.709,
+        "p99_ms": 20.028,
+        "errors": 0
+      },
+      "workers_4": {
+        "throughput_rps": 1706.9,
+        "p50_ms": 4.836,
+        "p99_ms": 22.003,
+        "errors": 0
+      },
+      "throughput_gain": 1.14,
+      "ideal_gain": 4,
+      "scaling_efficiency": 0.285,
+      "p99_change": 1.1,
+      "holds": false,
+      "confounded_by_oversubscription": true
+    }
+  },
+  "pipeline_guarantees": [
+    "Every artifact carries a manifest: dataset fingerprint, git sha, seed, hyperparameters, environment and metrics.",
+    "The export step re-loads its own output and asserts agreement with the eager model (max logit difference 3.6e-06 on 512 samples) or refuses to write.",
+    "The serving registry verifies the artifact's sha256 against the manifest before activation.",
+    "A failed load leaves the previous model serving; rollback is one call.",
+    "Readiness requires loaded AND warmed, and returns 503 when not ready so a load balancer removes the instance rather than sending it traffic.",
+    "The same pipeline builds, tests and containerises a Java service alongside the Python one, with no language-specific logic in the pipeline itself."
+  ],
+  "known_limits": [
+    "Trained on one machine (Apple MPS) and served on CPU. The accuracy is device-independent; the latency numbers are not.",
+    "The horizontal-scaling hypothesis is untested on real separate hosts.",
+    "Autoscaling is configured (fly.toml) but the breaking point was measured against a single instance, so the autoscale trigger itself is unproven.",
+    "No GPU path. On a GPU the batching finding would very likely invert, because kernel-launch overhead is exactly the fixed cost that is missing on CPU.",
+    "The load generator runs on the same machine as the service, which caps measurable throughput and is the confound in the third finding."
+  ]
+}

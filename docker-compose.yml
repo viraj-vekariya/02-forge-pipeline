@@ -1,0 +1,44 @@
+# Both deployables, built by the same pipeline, running side by side.
+#
+#   make train && make export      # produce the artifact the image copies in
+#   docker compose up --build
+#   open http://localhost:8200
+
+services:
+  inference:
+    build:
+      context: .
+      dockerfile: infra/Dockerfile.serve
+    ports: ["8200:8200"]
+    environment:
+      FORGE_TORCH_THREADS: "1"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request;urllib.request.urlopen('http://127.0.0.1:8200/health/ready',timeout=3)"]
+      interval: 10s
+      timeout: 4s
+      retries: 6
+      start_period: 40s
+    deploy:
+      resources:
+        limits:
+          # Pinned so the container's throughput is reproducible. Without a limit the
+          # number depends on whatever else the host happens to be doing.
+          cpus: "2.0"
+          memory: 1G
+
+  features:
+    build:
+      context: .
+      dockerfile: infra/Dockerfile.features
+    ports: ["8201:8201"]
+    environment:
+      # MUST match train/data.py. A mismatch here degrades accuracy silently, with no
+      # error anywhere - which is why it is config in both places rather than a constant.
+      FORGE_NORM_MEAN: "0.2860"
+      FORGE_NORM_STD: "0.3530"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8201/api/features/health"]
+      interval: 10s
+      timeout: 4s
+      retries: 8
+      start_period: 25s

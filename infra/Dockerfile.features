@@ -1,0 +1,20 @@
+FROM maven:3.9-eclipse-temurin-21 AS build
+WORKDIR /build
+COPY services/java-service/pom.xml .
+RUN mvn -B -q dependency:go-offline
+COPY services/java-service/src ./src
+RUN mvn -B -q package -DskipTests
+
+FROM eclipse-temurin:21-jre-alpine
+RUN addgroup -S forge && adduser -S forge -G forge
+WORKDIR /app
+COPY --from=build /build/target/feature-service-1.0.0.jar app.jar
+USER forge
+ENV FEATURE_PORT=8201
+# Container-aware heap. Without MaxRAMPercentage the JVM sizes its heap from the HOST's
+# memory and gets OOM-killed under a cgroup limit.
+ENV JAVA_OPTS="-XX:MaxRAMPercentage=70 -XX:+UseSerialGC"
+EXPOSE 8201
+HEALTHCHECK --interval=15s --timeout=4s --start-period=25s --retries=3 \
+    CMD wget -qO- http://127.0.0.1:8201/api/features/health || exit 1
+ENTRYPOINT ["sh", "-c", "java $JAVA_OPTS -jar app.jar"]
