@@ -5,13 +5,24 @@ answer "did this commit help?" rests on two runs of the same code producing the 
 model, and that property is silently lost the moment one random source goes unseeded.
 """
 
+import pytest
 import torch
 
 from train import data as data_mod
+
+# The dataset is fetched by `make data` / the training job, not committed. Tests that
+# read it are skipped rather than failed when it is absent, matching how every other
+# artifact-dependent test in these projects behaves - CI's contract job downloads the
+# trained model but not the 82MB of idx files, and a missing input is not a defect.
+DATA_PRESENT = (data_mod.DATA_DIR / "FashionMNIST" / "raw").exists()
+needs_data = pytest.mark.skipif(
+    not DATA_PRESENT,
+    reason=f"no dataset at {data_mod.DATA_DIR}; run `make data` or `python3 train/data.py`")
 from train.model import ForgeCNN, build, parameter_count, pick_device
 from train.train import set_seed
 
 
+@needs_data
 def test_splits_do_not_overlap_and_sum_correctly():
     s = data_mod.load_splits(download=False)
     sizes = s.sizes()
@@ -20,6 +31,7 @@ def test_splits_do_not_overlap_and_sum_correctly():
     assert sizes["val"] == 6_000
 
 
+@needs_data
 def test_the_split_is_deterministic():
     """Two loads must produce identical splits, or two CI runs are incomparable."""
     a = data_mod.load_splits(download=False)
@@ -28,6 +40,7 @@ def test_the_split_is_deterministic():
     assert torch.equal(a.train.tensors[1][:500], b.train.tensors[1][:500])
 
 
+@needs_data
 def test_normalisation_is_applied():
     """Roughly zero mean and unit variance. If normalisation were skipped the mean
     would sit near 0.286 and training would be slower for no visible reason."""
@@ -38,6 +51,7 @@ def test_normalisation_is_applied():
     assert 0.8 < sample.std().item() < 1.25
 
 
+@needs_data
 def test_dataset_is_balanced_so_accuracy_is_a_fair_headline():
     s = data_mod.load_splits(download=False)
     counts = list(data_mod.class_balance(s)["test"].values())
