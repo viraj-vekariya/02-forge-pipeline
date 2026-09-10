@@ -27,9 +27,17 @@ artifacts/*.pt
 artifacts/*.npz
 artifacts/*_cache.json
 
-# Trained weights - reproduced by `make all` (seeded, deterministic)
+# The training checkpoint stays out - it is 1.8 MB of optimiser state that `make all`
+# reproduces exactly (seeded, deterministic).
 artifacts/model.pt
-artifacts/model_traced.pt
+
+# The TRACED model is committed, deliberately. The serving image copies it in rather than
+# training during the build, so that the model that was evaluated is byte-for-byte the
+# model that ships - and that is only true if the artifact is in the repository. At
+# 1.8 MB it is small enough not to make the history unreadable, and manifest.json carries
+# its sha256 so a corrupted copy fails the build rather than serving quietly wrong
+# predictions.
+!artifacts/model_traced.pt
 services/java-service/target/
 
 # torchvision nests the dataset as data/FashionMNIST/raw/, not data/raw/ - so the

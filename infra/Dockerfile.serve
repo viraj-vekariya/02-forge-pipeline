@@ -25,6 +25,16 @@ COPY serve/ ./serve/
 # the image would produce a different model on every build.
 COPY artifacts/model_traced.pt artifacts/manifest.json ./artifacts/
 
+# manifest.json records the sha256 of the model it describes, so the image can prove the
+# weights it carries are the ones the reported 93.44% test accuracy was measured on. A
+# truncated or substituted checkpoint still loads and still answers - it just answers
+# wrongly - which is precisely the failure a running service will not tell you about.
+RUN python -c "\
+import hashlib,json,pathlib,sys; \
+m=json.loads(pathlib.Path('/app/artifacts/manifest.json').read_text())['export']; \
+d=hashlib.sha256(pathlib.Path('/app/artifacts/model_traced.pt').read_bytes()).hexdigest(); \
+sys.exit(0) if d==m['sha256'] else sys.exit(f\"model sha256 {d} != manifest {m['sha256']}\")"
+
 RUN chown -R forge:forge /app
 USER forge
 
