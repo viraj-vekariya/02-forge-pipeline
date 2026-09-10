@@ -1,5 +1,7 @@
 # Forge Pipeline
 
+**[▶ Live demo](https://viraj-vekariya.github.io/02-forge-pipeline/)** — the load ramp, Little's Law verification and confusion matrix, from the measured run.
+
 A CI/CD pipeline that trains a real convolutional network on a real public dataset,
 tests it, verifies its own export, containerises it, and deploys it alongside a Java
 service — then loads the deployed endpoint until it breaks and profiles why.

@@ -1,0 +1,253 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Forge Pipeline — where does it break, and why?</title>
+<meta name="description" content="CI/CD that trains, verifies and load-tests a deployed CNN. Little's Law holds to 0.0% error, identifying a saturated queue.">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.3.1/umd/react.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.3.1/umd/react-dom.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.26.2/babel.min.js"></script>
+<style>
+  :root{--bg:#0d1117;--panel:#151b23;--panel2:#1c242e;--line:#2a3440;--text:#e6edf3;
+        --dim:#8b98a9;--accent:#58a6ff;--ok:#3fb950;--warn:#d29922;--bad:#f85149;
+        --mono:ui-monospace,SFMono-Regular,"SF Mono",Menlo,monospace}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--text);
+       font:14px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,sans-serif}
+  .wrap{max-width:1180px;margin:0 auto;padding:24px 16px 70px}
+  header{border-bottom:1px solid var(--line);padding-bottom:16px;margin-bottom:18px}
+  h1{font-size:23px;margin:0 0 6px;letter-spacing:-.02em}
+  .sub{color:var(--dim);font-size:13.5px;max-width:80ch}
+  .links{display:flex;gap:10px;margin-top:12px;flex-wrap:wrap}
+  .links a{color:var(--accent);text-decoration:none;font:600 12px var(--mono);
+    border:1px solid var(--line);padding:6px 11px;border-radius:7px}
+  .banner{background:linear-gradient(90deg,rgba(88,166,255,.10),transparent);
+    border:1px solid var(--line);border-left:3px solid var(--accent);border-radius:8px;
+    padding:14px 16px;margin-bottom:18px}
+  .banner b{color:var(--accent)}
+  .grid{display:grid;gap:14px}
+  .cards{grid-template-columns:repeat(auto-fit,minmax(155px,1fr))}
+  .two{grid-template-columns:1fr 1fr}
+  @media(max-width:900px){.two{grid-template-columns:1fr}}
+  .card,.panel{background:var(--panel);border:1px solid var(--line);border-radius:10px}
+  .card{padding:12px 14px}
+  .card .label{color:var(--dim);font-size:11px;text-transform:uppercase;letter-spacing:.06em}
+  .card .value{font:600 20px/1.2 var(--mono);margin-top:5px}
+  .card .foot{color:var(--dim);font:11px var(--mono);margin-top:2px}
+  .panel{overflow:hidden;margin-top:14px}
+  .panel h2{font-size:12px;margin:0;padding:11px 14px;border-bottom:1px solid var(--line);
+    color:var(--dim);text-transform:uppercase;letter-spacing:.07em;font-weight:600}
+  .pad{padding:14px}
+  table{width:100%;border-collapse:collapse;font:12px var(--mono)}
+  th{background:var(--panel2);color:var(--dim);text-align:right;padding:7px 10px;
+     font-size:11px;border-bottom:1px solid var(--line)}
+  th:first-child,td:first-child{text-align:left}
+  td{padding:6px 10px;border-bottom:1px solid #1b232d;text-align:right}
+  tr.breach td{background:rgba(248,81,73,.10);color:var(--bad)}
+  input[type=range]{width:100%;accent-color:var(--accent)}
+  .ctl label{font:11px var(--mono);color:var(--dim);text-transform:uppercase;letter-spacing:.05em}
+  .kv{display:grid;grid-template-columns:auto 1fr;gap:4px 16px;font:12.5px var(--mono)}
+  .kv dt{color:var(--dim)} .kv dd{margin:0}
+  .note{color:var(--dim);font-size:12.5px;padding:0 14px 14px;line-height:1.55;max-width:82ch}
+  .good{color:var(--ok)} .bad{color:var(--bad)} .warn{color:var(--warn)}
+  code{font-family:var(--mono);background:var(--panel2);padding:1px 5px;border-radius:4px}
+  .cm{display:grid;grid-template-columns:96px repeat(10,1fr);gap:2px;font:9px var(--mono)}
+  .cm .h{color:var(--dim);writing-mode:vertical-rl;text-align:right;height:56px}
+  .cm .rl{color:var(--dim);display:flex;align-items:center;justify-content:flex-end;
+          padding-right:5px;font-size:10px}
+  .cm .c{aspect-ratio:1;border-radius:2px;display:flex;align-items:center;
+         justify-content:center;color:#cfe}
+</style>
+</head>
+<body>
+<div id="root"><div class="wrap"><p style="color:#8b98a9">loading…</p></div></div>
+<script type="text/babel">
+const {useState,useEffect,useMemo} = React;
+
+function App(){
+  const [d,setD]=useState(null); const [err,setErr]=useState("");
+  const [conc,setConc]=useState(8);
+  useEffect(()=>{fetch("data.json").then(r=>r.json()).then(setD).catch(e=>setErr(String(e)));},[]);
+  if(err) return <div className="wrap"><p className="bad">{err}</p></div>;
+  if(!d) return <div className="wrap"><p className="sub">loading…</p></div>;
+
+  const L=d.loadtest, LL=d.littles_law, E=d.eval, M=d.manifest, R=d.results;
+  // Little's Law, evaluated live at the chosen concurrency against the measured service
+  // rate. This is the identity the profiler verified to 0.0% error.
+  const peakRps = L.peak.throughput_rps;
+  const predictedLatency = conc / peakRps * 1000;
+  const nearest = LL.rows.reduce((b,r)=>Math.abs(r.concurrency-conc)<Math.abs(b.concurrency-conc)?r:b, LL.rows[0]);
+  const cm=E.confusion_matrix, maxCm=Math.max(...cm.flat());
+
+  return <div className="wrap">
+    <header>
+      <h1>Forge Pipeline — where does it break, and why?</h1>
+      <div className="sub">
+        A CI/CD pipeline that trains a real CNN, re-loads its own export to verify it,
+        containerises it, and deploys it beside a Java service — then pushes load until p99
+        breaches the SLA and profiles the cause rather than guessing it.
+      </div>
+      <div className="links">
+        <a href="https://github.com/viraj-vekariya/02-forge-pipeline">source on GitHub</a>
+        <a href="https://github.com/viraj-vekariya/02-forge-pipeline/blob/main/DECISIONS.md">DECISIONS.md</a>
+        <a href="https://github.com/viraj-vekariya/02-forge-pipeline/blob/main/outputs/loadtest.json">load-test data</a>
+      </div>
+    </header>
+
+    <div className="banner">
+      <b>The finding:</b> throughput plateaus at <b>{Math.round(peakRps).toLocaleString()} rps
+      from two concurrent clients</b>. Every extra client adds latency and no throughput.
+      <b> Little's Law holds to {(LL.mean_relative_error*100).toFixed(1)}% error across all
+      seven steps</b>, identifying a saturated queue at its service-rate ceiling — not a leak,
+      a deadlock, or a misconfigured pool.
+    </div>
+
+    <div className="grid cards">
+      <div className="card"><div className="label">Test accuracy</div>
+        <div className="value good">{(E.test_accuracy*100).toFixed(2)}%</div>
+        <div className="foot">{M.model.total.toLocaleString()} params, 10k held out</div></div>
+      <div className="card"><div className="label">Breaking point</div>
+        <div className="value bad">{L.breaking_point.concurrency}</div>
+        <div className="foot">p99 crossed {L.sla}ms</div></div>
+      <div className="card"><div className="label">Peak throughput</div>
+        <div className="value">{Math.round(peakRps).toLocaleString()}</div>
+        <div className="foot">rps, at concurrency {L.peak.concurrency}</div></div>
+      <div className="card"><div className="label">Little's Law error</div>
+        <div className="value good">{(LL.mean_relative_error*100).toFixed(1)}%</div>
+        <div className="foot">across 7 steps</div></div>
+      <div className="card"><div className="label">ECE</div>
+        <div className="value">{E.ece_calibrated}</div>
+        <div className="foot">from {E.ece_raw}, T={E.temperature}</div></div>
+      <div className="card"><div className="label">Export verified</div>
+        <div className="value good">{M.export.max_logit_difference.toExponential(1)}</div>
+        <div className="foot">max diff on {M.export.verified_on_samples} samples</div></div>
+    </div>
+
+    <div className="panel">
+      <h2>Little's Law — concurrency = throughput × latency</h2>
+      <div className="pad">
+        <div className="ctl"><label>concurrency — {conc} clients</label>
+          <input type="range" min="1" max="64" value={conc} onChange={e=>setConc(+e.target.value)}/></div>
+        <dl className="kv" style={{marginTop:14}}>
+          <dt>service rate (measured)</dt><dd>{Math.round(peakRps).toLocaleString()} rps</dd>
+          <dt>predicted latency at {conc}</dt><dd>{predictedLatency.toFixed(2)} ms</dd>
+          <dt>nearest measured step</dt>
+          <dd>concurrency {nearest.concurrency} → {nearest.mean_latency_ms.toFixed(2)} ms
+            at {Math.round(nearest.throughput_rps).toLocaleString()} rps</dd>
+          <dt>Little's Law says concurrency =</dt>
+          <dd className="good">{nearest.predicted_concurrency} (measured {nearest.concurrency},
+            error {(nearest.relative_error*100).toFixed(1)}%)</dd>
+        </dl>
+      </div>
+      <div className="note">
+        Move the slider. Latency rises <b>linearly</b> while throughput stays flat — the
+        signature of a saturated queue. This identity also caught a bug in the harness
+        itself: the first run showed a <i>constant</i> 25.7% error at every step, and a
+        constant error is the signature of a measurement artifact, not a system property.
+        Throughput was being counted over a different window than latency.
+      </div>
+    </div>
+
+    <div className="panel">
+      <h2>Load ramp — SLA p99 ≤ {L.sla}ms</h2>
+      <div className="pad"><table>
+        <thead><tr><th>concurrency</th><th>rps</th><th>p50 ms</th><th>p95 ms</th>
+          <th>p99 ms</th><th>max ms</th><th>errors</th></tr></thead>
+        <tbody>{L.steps.map(s=>
+          <tr key={s.concurrency} className={s.breached?"breach":""}>
+            <td>{s.concurrency}</td><td>{Math.round(s.throughput_rps).toLocaleString()}</td>
+            <td>{s.p50_ms.toFixed(2)}</td><td>{s.p95_ms.toFixed(2)}</td>
+            <td>{s.p99_ms.toFixed(2)}</td><td>{s.max_ms.toFixed(2)}</td>
+            <td>{s.errors}</td></tr>)}
+        </tbody></table></div>
+      <div className="note">
+        Zero errors at every level — the service degrades by getting slower, not by failing.
+        The harness measures its own overhead first (p50 {L.harness_overhead.health_p50_ms}ms),
+        because a load test whose client is the bottleneck measures the client.
+      </div>
+    </div>
+
+    <div className="two">
+      <div className="panel" style={{marginTop:0}}>
+        <h2>Training — 8 epochs, seeded and deterministic</h2>
+        <div className="pad"><table>
+          <thead><tr><th>epoch</th><th>train loss</th><th>val loss</th><th>val acc</th>
+            <th>sec</th></tr></thead>
+          <tbody>{M.history.map(h=>
+            <tr key={h.epoch}><td>{h.epoch}</td><td>{h.train_loss.toFixed(4)}</td>
+              <td>{h.val_loss.toFixed(4)}</td><td>{h.val_accuracy.toFixed(4)}</td>
+              <td>{h.seconds.toFixed(1)}</td></tr>)}
+        </tbody></table></div>
+        <div className="note">Best val {M.best_val_accuracy}, test {E.test_accuracy} — the gap
+          is what an honest held-out set is for.</div>
+      </div>
+
+      <div className="panel" style={{marginTop:0}}>
+        <h2>Calibration — the model was <i>under</i>-confident</h2>
+        <div className="pad">
+          <dl className="kv">
+            <dt>fitted temperature</dt><dd className="warn">{E.temperature}</dd>
+            <dt>ECE before</dt><dd>{E.ece_raw}</dd>
+            <dt>ECE after</dt><dd className="good">{E.ece_calibrated}</dd>
+          </dl>
+          <table style={{marginTop:12}}>
+            <thead><tr><th>confidence bin</th><th>n</th><th>confidence</th><th>accuracy</th></tr></thead>
+            <tbody>{E.reliability_calibrated.slice(-5).map((r,i)=>
+              <tr key={i}><td>{r.bin}</td><td>{r.n}</td><td>{r.confidence.toFixed(3)}</td>
+                <td>{r.accuracy.toFixed(3)}</td></tr>)}
+            </tbody></table>
+        </div>
+        <div className="note">
+          T &lt; 1 means the model needed <b>sharpening</b>, not softening — the opposite of
+          the usual cross-entropy failure mode, and traceable to
+          <code>label_smoothing=0.05</code> in the loss.
+        </div>
+      </div>
+    </div>
+
+    <div className="panel">
+      <h2>Confusion matrix — 10,000 held-out images</h2>
+      <div className="pad">
+        <div className="cm">
+          <div/>{E.classes.map(c=><div key={c} className="h">{c}</div>)}
+          {cm.map((row,i)=>[
+            <div key={"l"+i} className="rl">{E.classes[i]}</div>,
+            ...row.map((v,j)=>
+              <div key={i+"-"+j} className="c" title={`${E.classes[i]} → ${E.classes[j]}: ${v}`}
+                style={{background:i===j?`rgba(63,185,80,${0.15+0.85*v/maxCm})`
+                                        :`rgba(248,81,73,${Math.min(0.9,v/60)})`}}>
+                {v>=40?v:""}</div>)])}
+        </div>
+      </div>
+      <div className="note">
+        Worst confusions, all semantically sensible: {E.top_confusions.slice(0,3).map(c=>
+          `${c.true}→${c.predicted} (${c.count})`).join(", ")}. A confusion matrix is what
+        lets CI gate on <i>which</i> errors, not just how many.
+      </div>
+    </div>
+
+    <div className="panel">
+      <h2>The second finding — batching makes the model slower</h2>
+      <div className="pad"><table>
+        <thead><tr><th>batch size</th><th>per-instance inference</th></tr></thead>
+        <tbody>
+          <tr className="win"><td>1</td><td className="good">0.303 ms</td></tr>
+          <tr><td>8</td><td>0.383 ms</td></tr>
+          <tr><td>32</td><td>0.423 ms</td></tr>
+          <tr><td>128</td><td className="bad">0.451 ms</td></tr>
+        </tbody></table></div>
+      <div className="note">
+        Batching normally buys 5–10× by amortising a large fixed per-call cost — kernel
+        launch, host-device transfer, dispatch. A small CNN pinned to one CPU thread has
+        almost none of that, so per-item compute dominates and building a larger tensor
+        costs more than it saves. Its apparent 1.2× win over HTTP was amortised
+        <i>transport</i>, not model efficiency. On a GPU this would very likely invert.
+      </div>
+    </div>
+  </div>;
+}
+ReactDOM.createRoot(document.getElementById("root")).render(<App/>);
+</script>
+</body>
+</html>
