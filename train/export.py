@@ -64,7 +64,20 @@ def main() -> int:
     # avoids TorchScript's restrictions on the Python it will accept.
     with torch.no_grad():
         traced = torch.jit.trace(model, example)
-    traced = torch.jit.optimize_for_inference(traced)
+
+    # optimize_for_inference is an optimisation, not a correctness requirement, and it
+    # is version-sensitive: on some torch builds it raises
+    # "required keyword attribute 'value' is undefined" while freezing batch-norm.
+    # CI hit exactly that. Falling back to the plain traced module keeps the export
+    # correct everywhere, and the verification below is unchanged either way - which is
+    # the point of verifying rather than trusting.
+    try:
+        traced = torch.jit.optimize_for_inference(traced)
+        optimised = True
+    except Exception as exc:                      # noqa: BLE001
+        print(f"  note: optimize_for_inference unavailable ({type(exc).__name__}); "
+              f"exporting the plain traced graph")
+        optimised = False
 
     scripted_path = ARTIFACTS / "model_traced.pt"
     traced.save(str(scripted_path))
@@ -92,6 +105,7 @@ def main() -> int:
         "sha256": sha256(scripted_path),
         "bytes": scripted_path.stat().st_size,
         "exported_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
+        "optimised_for_inference": optimised,
         "verified_on_samples": int(check.shape[0]),
         "max_logit_difference": float(f"{max_diff:.3e}"),
         "argmax_agreement": agree,

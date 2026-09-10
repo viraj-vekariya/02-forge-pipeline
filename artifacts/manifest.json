@@ -106,9 +106,10 @@
   "export": {
     "format": "torchscript-traced",
     "file": "model_traced.pt",
-    "sha256": "7eb534675fc7ff44434849afc83db9fbfdd156bd9e9dae67ea31b93908cb48f7",
+    "sha256": "9e9cbe9ed3346af4ed7c5581fccde61ddb31df42e530fce6e4a9f35b86cea2a7",
     "bytes": 1877350,
-    "exported_at": "2026-09-10T05:40:27",
+    "exported_at": "2026-09-10T08:57:02",
+    "optimised_for_inference": true,
     "verified_on_samples": 512,
     "max_logit_difference": 3.576e-06,
     "argmax_agreement": true,
