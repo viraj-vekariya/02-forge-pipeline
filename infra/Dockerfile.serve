@@ -43,4 +43,6 @@ HEALTHCHECK --interval=15s --timeout=4s --start-period=40s --retries=3 \
     CMD python -c "import urllib.request,sys; \
         sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8200/health/ready',timeout=3).status==200 else 1)"
 
-CMD ["uvicorn", "serve.app:app", "--host", "0.0.0.0", "--port", "8200", "--workers", "2"]
+# Worker count and port come from the environment so the same image runs locally
+# (2 workers) and on a 512MB free instance (1 worker, since each loads its own model copy).
+CMD ["sh","-c","uvicorn serve.app:app --host 0.0.0.0 --port ${PORT:-8200} --workers ${WEB_CONCURRENCY:-2}"]

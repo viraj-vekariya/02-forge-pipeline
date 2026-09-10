@@ -1,0 +1,21 @@
+# Render blueprint, free tier (512 MB).
+#
+# ONE uvicorn worker, not the two the local Dockerfile uses. Each worker loads its own
+# copy of the model, and two would not fit. That also makes the deployed instance a live
+# demonstration of the load test's finding: throughput saturates at one worker's service
+# rate, and Little's Law holds because of it.
+services:
+  - type: web
+    name: forge-inference
+    runtime: docker
+    dockerfilePath: ./infra/Dockerfile.serve
+    dockerContext: .
+    plan: free
+    region: singapore
+    healthCheckPath: /health/ready
+    autoDeploy: true
+    envVars:
+      - key: FORGE_TORCH_THREADS
+        value: "1"
+      - key: WEB_CONCURRENCY
+        value: "1"
