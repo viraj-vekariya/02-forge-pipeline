@@ -2,6 +2,8 @@
 
 **[▶ Live demo](https://viraj-vekariya.github.io/02-forge-pipeline/)** — the load ramp, Little's Law verification and confusion matrix, from the measured run.
 
+**[⇧ Deploy it yourself](https://render.com/deploy?repo=https://github.com/viraj-vekariya/02-forge-pipeline)** — one click builds `render.yaml` on Render's free tier: the trained model behind a FastAPI inference endpoint. No card, no configuration.
+
 A CI/CD pipeline that trains a real convolutional network on a real public dataset,
 tests it, verifies its own export, containerises it, and deploys it alongside a Java
 service — then loads the deployed endpoint until it breaks and profiles why.
