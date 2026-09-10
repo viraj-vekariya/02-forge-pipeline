@@ -65,22 +65,36 @@ def main() -> int:
     with torch.no_grad():
         traced = torch.jit.trace(model, example)
 
-    # optimize_for_inference is an optimisation, not a correctness requirement, and it
-    # is version-sensitive: on some torch builds it raises
-    # "required keyword attribute 'value' is undefined" while freezing batch-norm.
-    # CI hit exactly that. Falling back to the plain traced module keeps the export
-    # correct everywhere, and the verification below is unchanged either way - which is
-    # the point of verifying rather than trusting.
+    scripted_path = ARTIFACTS / "model_traced.pt"
+
+    # optimize_for_inference is an optimisation, not a correctness requirement, and it is
+    # version-sensitive. On the torch build CI uses it SUCCEEDS but emits a graph that
+    # then fails to deserialise with "required keyword attribute 'value' is undefined" -
+    # so wrapping only the optimise call is not enough; the round trip has to be what is
+    # tested. If the optimised graph will not reload, the plain traced graph is exported
+    # instead, and the eager-vs-traced verification below is unchanged either way.
+    def try_export(module) -> bool:
+        try:
+            module.save(str(scripted_path))
+            torch.jit.load(str(scripted_path), map_location=device)
+            return True
+        except Exception:                          # noqa: BLE001
+            return False
+
+    optimised = False
     try:
-        traced = torch.jit.optimize_for_inference(traced)
-        optimised = True
-    except Exception as exc:                      # noqa: BLE001
-        print(f"  note: optimize_for_inference unavailable ({type(exc).__name__}); "
-              f"exporting the plain traced graph")
+        candidate = torch.jit.optimize_for_inference(traced)
+        optimised = try_export(candidate)
+    except Exception:                              # noqa: BLE001
         optimised = False
 
-    scripted_path = ARTIFACTS / "model_traced.pt"
-    traced.save(str(scripted_path))
+    if not optimised:
+        print("  note: the optimised graph would not round-trip on this torch build; "
+              "exporting the plain traced graph")
+        if not try_export(traced):
+            print("EXPORT FAILED: the traced graph could not be saved and reloaded",
+                  file=sys.stderr)
+            return 1
 
     # --- the verification --------------------------------------------------
     reloaded = torch.jit.load(str(scripted_path), map_location=device)
